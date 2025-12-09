@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
-import missingno as msno
 import plotly.express as px
 from .analysis import correlation_matrix
 
