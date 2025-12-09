@@ -11,56 +11,6 @@ def dataset_info(df):
 def get_missing_rows(df):
     return df[df.isna().any(axis=1)]
 
-def fill_missing_values(df, cat_method='unknown', group_col=None):
-    df = df.copy()
-    filled_info = {}
-
-    # Числовые колонки заполняются медианой
-    numeric_cols = df.select_dtypes(include='number').columns
-    for col in numeric_cols:
-        if df[col].isna().any():
-            median_val = df[col].median()
-            df[col].fillna(median_val, inplace=True)
-            filled_info[col] = float(median_val)
-
-    # Категориальные колонки
-    cat_cols = df.select_dtypes(include='object').columns
-    for col in cat_cols:
-        if df[col].isna().any():
-            if cat_method == 'unknown':
-                df[col].fillna('Unknown', inplace=True)
-                filled_info[col] = 'Unknown'
-            elif cat_method == 'mode':
-                # Заполняем модой по всему столбцу
-                mode_val = df[col].mode()
-                if not mode_val.empty:
-                    df[col].fillna(mode_val[0], inplace=True)
-                    filled_info[col] = mode_val[0]
-                else:
-                    df[col].fillna('Unknown', inplace=True)
-                    filled_info[col] = 'Unknown'
-            elif cat_method == 'group' and group_col and group_col in df.columns and group_col != col:
-                # Заполняем модой внутри каждой группы
-                def fill_by_group(series):
-                    mode_val = series.mode()
-                    if not mode_val.empty:
-                        return mode_val[0]
-                    return 'Unknown'  # на случай, если в группе все NaN
-                
-                # Группируем и заполняем
-                df[col] = df.groupby(group_col)[col].transform(
-                    lambda x: x.fillna(fill_by_group(x))
-                )
-                # Если после группировки остались NaN (например, все значения в группе были NaN)
-                df[col].fillna('Unknown', inplace=True)
-                filled_info[col] = f"Заполнено по группе '{group_col}'"
-            else:
-                # fallback
-                df[col].fillna('Unknown', inplace=True)
-                filled_info[col] = 'Unknown'
-
-    return df, filled_info
-
 def numerical_stats(df):
     return df.describe(include='number')
 
@@ -121,16 +71,128 @@ def get_outliers_summary(df):
 
     return outliers_summary
 
-def fill_outliers_iqr(df, columns=None):
-    df_clean = df.copy()
-    if columns is None:
-        columns = df_clean.select_dtypes(include='number').columns
+def get_all_outliers(df, outliers_summary):
+    all_outliers = []
+    numeric_cols = df.select_dtypes(include='number').columns
 
-    for col in columns:
-        lower_bound, upper_bound = calculate_iqr_bounds(df_clean[col])
-        df_clean[col] = df_clean[col].clip(lower=lower_bound, upper=upper_bound)
-    
-    return df_clean
+    for col in numeric_cols:
+        if col in outliers_summary:
+            outlier_info = outliers_summary[col]
+            if outlier_info['outliers_count'] > 0 and outlier_info['outliers_data'] is not None:
+                # Проверяем, что индексы все еще существуют в текущем датафрейме
+                valid_indices = [idx for idx in outlier_info['outliers_data'].index if idx in df.index]
+                for idx in valid_indices:
+                    all_outliers.append((idx, col, outlier_info['outliers_data'].loc[idx, col]))
+
+    return all_outliers
+
+def process_outliers(df, column, method):
+    df_updated = df.copy()
+    outlier_info = detect_outliers_iqr(df_updated, column)
+
+    if outlier_info['outliers_count'] == 0 or outlier_info['outliers_data'] is None:
+        return df_updated, 0
+
+    processed_count = outlier_info['outliers_count']
+
+    if method == 'iqr':
+        # Замена на границы IQR - используем clip для надежности
+        lower_bound = outlier_info['lower_bound']
+        upper_bound = outlier_info['upper_bound']
+        df_updated[column] = df_updated[column].clip(lower=lower_bound, upper=upper_bound)
+
+    elif method == 'median':
+        # Замена на медиану
+        median_val = df_updated[column].median()
+        for idx in outlier_info['outliers_data'].index:
+            df_updated.loc[idx, column] = median_val
+
+    elif method == 'mean':
+        # Замена на среднее
+        mean_val = df_updated[column].mean()
+        for idx in outlier_info['outliers_data'].index:
+            df_updated.loc[idx, column] = mean_val
+
+    elif method == 'remove':
+        # Удаление строк с выбросами
+        df_updated = df_updated.drop(outlier_info['outliers_data'].index)
+
+    return df_updated, processed_count
+
+def has_numeric_missing(df):
+    """Проверяет наличие пропусков в числовых столбцах"""
+    return df.select_dtypes(include='number').isna().any().any()
+
+def has_categorical_missing(df):
+    """Проверяет наличие пропусков в категориальных столбцах"""
+    cat_cols = df.select_dtypes(include='object').columns
+    return df[cat_cols].isna().any().any() if len(cat_cols) > 0 else False
+
+def fill_numeric_missing(df, method='median'):
+    """
+    Заполняет пропуски в числовых столбцах
+
+    Args:
+        df: DataFrame
+        method: 'median' или 'mean'
+
+    Returns:
+        DataFrame с заполненными пропусками
+    """
+    df_filled = df.copy()
+    numeric_cols = df.select_dtypes(include='number').columns
+
+    for col in numeric_cols:
+        if df_filled[col].isna().any():
+            if method == 'median':
+                fill_val = df_filled[col].median()
+            elif method == 'mean':
+                fill_val = df_filled[col].mean()
+            else:
+                continue
+            df_filled[col].fillna(fill_val, inplace=True)
+
+    return df_filled
+
+def fill_categorical_missing(df, method='unknown'):
+    """
+    Заполняет пропуски в категориальных столбцах
+
+    Args:
+        df: DataFrame
+        method: 'unknown' или 'mode'
+
+    Returns:
+        DataFrame с заполненными пропусками
+    """
+    df_filled = df.copy()
+    cat_cols = df.select_dtypes(include='object').columns
+
+    for col in cat_cols:
+        if df_filled[col].isna().any():
+            if method == 'unknown':
+                df_filled[col].fillna('Unknown', inplace=True)
+            elif method == 'mode':
+                mode_val = df_filled[col].mode()
+                if not mode_val.empty:
+                    df_filled[col].fillna(mode_val[0], inplace=True)
+
+    return df_filled
+
+def remove_missing_rows(df):
+    """
+    Удаляет все строки, содержащие хотя бы один пропуск
+
+    Args:
+        df: DataFrame
+
+    Returns:
+        tuple: (DataFrame без пропусков, количество удаленных строк)
+    """
+    initial_rows = len(df)
+    df_clean = df.dropna()
+    removed_rows = initial_rows - len(df_clean)
+    return df_clean, removed_rows
 
 def get_group_summary(df, group_by_col, agg_cols=None):
     if agg_cols is None:
