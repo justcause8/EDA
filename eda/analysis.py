@@ -129,16 +129,6 @@ def has_categorical_missing(df):
     return df[cat_cols].isna().any().any() if len(cat_cols) > 0 else False
 
 def fill_numeric_missing(df, method='median'):
-    """
-    Заполняет пропуски в числовых столбцах
-
-    Args:
-        df: DataFrame
-        method: 'median' или 'mean'
-
-    Returns:
-        DataFrame с заполненными пропусками
-    """
     df_filled = df.copy()
     numeric_cols = df.select_dtypes(include='number').columns
 
@@ -155,16 +145,6 @@ def fill_numeric_missing(df, method='median'):
     return df_filled
 
 def fill_categorical_missing(df, method='unknown'):
-    """
-    Заполняет пропуски в категориальных столбцах
-
-    Args:
-        df: DataFrame
-        method: 'unknown' или 'mode'
-
-    Returns:
-        DataFrame с заполненными пропусками
-    """
     df_filled = df.copy()
     cat_cols = df.select_dtypes(include='object').columns
 
@@ -180,19 +160,40 @@ def fill_categorical_missing(df, method='unknown'):
     return df_filled
 
 def remove_missing_rows(df):
-    """
-    Удаляет все строки, содержащие хотя бы один пропуск
-
-    Args:
-        df: DataFrame
-
-    Returns:
-        tuple: (DataFrame без пропусков, количество удаленных строк)
-    """
     initial_rows = len(df)
     df_clean = df.dropna()
     removed_rows = initial_rows - len(df_clean)
     return df_clean, removed_rows
+
+def split_name_column(df, name_col='name', brand_col='brand', model_col='model'):
+    df_split = df.copy()
+
+    if name_col not in df_split.columns:
+        return df_split
+
+    # Находим позицию столбца name
+    name_position = df_split.columns.get_loc(name_col)
+
+    # Разделяем name на brand и model
+    df_split[brand_col] = df_split[name_col].str.split().str[0]
+    df_split[model_col] = df_split[name_col].str.split(n=1).str[1].fillna('')
+
+    # Удаляем исходный столбец name
+    df_split = df_split.drop(columns=[name_col])
+
+    # Переставляем столбцы: brand и model на место name
+    cols = df_split.columns.tolist()
+    # Удаляем brand и model из текущих позиций
+    cols.remove(brand_col)
+    cols.remove(model_col)
+    # Вставляем brand и model на место name
+    cols.insert(name_position, brand_col)
+    cols.insert(name_position + 1, model_col)
+
+    # Переупорядочиваем DataFrame
+    df_split = df_split[cols]
+
+    return df_split
 
 def get_group_summary(df, group_by_col, agg_cols=None):
     if agg_cols is None:

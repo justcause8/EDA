@@ -5,7 +5,7 @@ from eda.analysis import (
     dataset_info, get_missing_rows, numerical_stats,
     get_categorical_analysis, get_outliers_summary, get_group_summary,
     get_all_outliers, process_outliers, has_numeric_missing, has_categorical_missing,
-    fill_numeric_missing, fill_categorical_missing, remove_missing_rows
+    fill_numeric_missing, fill_categorical_missing, remove_missing_rows, split_name_column
 )
 from eda.plots import (
     plot_missing, plot_bar,
@@ -59,6 +59,28 @@ if uploaded:
 
     with tab1:
         st.header("Основная информация о датасете")
+        
+        # Разделение столбца name или CarName на brand и model
+        column_to_split = None
+        if 'name' in df.columns:
+            column_to_split = 'name'
+        elif 'CarName' in df.columns:
+            column_to_split = 'CarName'
+        
+        if column_to_split and 'brand' not in df.columns and 'model' not in df.columns:
+            st.write(f"#### Разделение столбца {column_to_split}")
+            split_name = st.checkbox(
+                f"Разделить столбец '{column_to_split}' на 'brand' (первое слово) и 'model' (остальные слова)",
+                value=False,
+                key=f"split_{column_to_split}_column"
+            )
+
+            if split_name:
+                df_split = split_name_column(df, name_col=column_to_split)
+                st.session_state['df'] = df_split
+                st.success(f"Столбец '{column_to_split}' успешно разделен на 'brand' и 'model'!")
+                st.rerun()
+                
         st.write("#### Первые строки")
         st.dataframe(df.head())
         st.write("#### Последние строки")

@@ -25,14 +25,12 @@ def plot_numerical_histograms(df):
     n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
-    if n_rows == 1:
-        axes = axes.reshape(1, -1)
-    elif n_cols == 1:
-        axes = axes.reshape(-1, 1)
+
+    # Создаем плоский массив axes для удобного доступа
+    axes_flat = axes.flatten() if n_rows * n_cols > 1 else [axes]
 
     for i, col in enumerate(numeric_cols):
-        row, col_idx = divmod(i, n_cols)
-        ax = axes[row, col_idx] if n_rows > 1 and n_cols > 1 else axes[i]
+        ax = axes_flat[i]
         sns.histplot(df[col], kde=True, ax=ax)
         ax.set_title(f'{col}')
         ax.set_xlabel(col)
@@ -40,9 +38,7 @@ def plot_numerical_histograms(df):
 
     # Убираем пустые subplot'ы
     for i in range(len(numeric_cols), n_rows * n_cols):
-        row, col_idx = divmod(i, n_cols)
-        if n_rows > 1 and n_cols > 1:
-            fig.delaxes(axes[row, col_idx])
+        fig.delaxes(axes_flat[i])
 
     plt.tight_layout()
     return fig
@@ -108,22 +104,18 @@ def plot_all_boxplots(df):
     n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
-    if n_rows == 1:
-        axes = axes.reshape(1, -1)
-    elif n_cols == 1:
-        axes = axes.reshape(-1, 1)
+
+    # Создаем плоский массив axes для удобного доступа
+    axes_flat = axes.flatten() if n_rows * n_cols > 1 else [axes]
 
     for i, col in enumerate(numeric_cols):
-        row, col_idx = divmod(i, n_cols)
-        ax = axes[row, col_idx] if n_rows > 1 and n_cols > 1 else axes[i]
+        ax = axes_flat[i]
         sns.boxplot(y=df[col], ax=ax)
         ax.set_title(f'{col}')
 
     # Убираем пустые subplot'ы
     for i in range(len(numeric_cols), n_rows * n_cols):
-        row, col_idx = divmod(i, n_cols)
-        if n_rows > 1 and n_cols > 1:
-            fig.delaxes(axes[row, col_idx])
+        fig.delaxes(axes_flat[i])
 
     plt.tight_layout()
     return fig
