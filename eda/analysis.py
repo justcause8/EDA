@@ -1,5 +1,14 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import IsolationForest
+from sklearn.impute import KNNImputer
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.preprocessing import StandardScaler
+
+
 def correlation_matrix(df):
     return df.corr(numeric_only=True)
+
 
 def dataset_info(df):
     return {
@@ -8,11 +17,14 @@ def dataset_info(df):
         "missing_values": df.isna().sum().to_dict()
     }
 
+
 def get_missing_rows(df):
     return df[df.isna().any(axis=1)]
 
+
 def numerical_stats(df):
     return df.describe(include='number')
+
 
 def categorical_stats(df):
     cat_cols = df.select_dtypes(include='object').columns
@@ -25,6 +37,7 @@ def categorical_stats(df):
         }
 
     return result
+
 
 def get_categorical_analysis(df):
     cat_cols = df.select_dtypes(include='object').columns
@@ -43,6 +56,7 @@ def get_categorical_analysis(df):
 
     return analysis
 
+
 def calculate_iqr_bounds(series):
     Q1 = series.quantile(0.25)
     Q3 = series.quantile(0.75)
@@ -50,6 +64,7 @@ def calculate_iqr_bounds(series):
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
     return lower_bound, upper_bound
+
 
 def detect_outliers_iqr(df, column):
     lower_bound, upper_bound = calculate_iqr_bounds(df[column])
@@ -61,15 +76,45 @@ def detect_outliers_iqr(df, column):
         'outliers_data': outliers if len(outliers) > 0 else None
     }
 
-def get_outliers_summary(df):
+
+def detect_outliers_iforest(df, column, contamination=0.05, random_state=42):
+    series = df[column]
+    valid_mask = series.notna()
+    values = series[valid_mask].to_numpy().reshape(-1, 1)
+
+    if len(values) == 0:
+        return {'outliers_count': 0, 'lower_bound': None, 'upper_bound': None, 'outliers_data': None}
+
+    model = IsolationForest(
+        contamination=contamination,
+        random_state=random_state,
+        n_estimators=200,
+    )
+    labels = model.fit_predict(values)
+    outlier_indices = series[valid_mask].index[labels == -1]
+    outliers = df.loc[outlier_indices]
+
+    return {
+        'outliers_count': len(outliers),
+        'lower_bound': None,
+        'upper_bound': None,
+        'outliers_data': outliers if len(outliers) > 0 else None
+    }
+
+
+def get_outliers_summary(df, method='iqr', contamination=0.05):
     numeric_cols = df.select_dtypes(include='number').columns
     outliers_summary = {}
 
     for col in numeric_cols:
-        outliers_info = detect_outliers_iqr(df, col)
+        if method == 'iforest':
+            outliers_info = detect_outliers_iforest(df, col, contamination=contamination)
+        else:
+            outliers_info = detect_outliers_iqr(df, col)
         outliers_summary[col] = outliers_info
 
     return outliers_summary
+
 
 def get_all_outliers(df, outliers_summary):
     all_outliers = []
@@ -79,39 +124,88 @@ def get_all_outliers(df, outliers_summary):
         if col in outliers_summary:
             outlier_info = outliers_summary[col]
             if outlier_info['outliers_count'] > 0 and outlier_info['outliers_data'] is not None:
-                # Проверяем, что индексы все еще существуют в текущем датафрейме
                 valid_indices = [idx for idx in outlier_info['outliers_data'].index if idx in df.index]
                 for idx in valid_indices:
                     all_outliers.append((idx, col, outlier_info['outliers_data'].loc[idx, col]))
 
     return all_outliers
 
-def process_outliers(df, column, method):
+
+def process_outliers(df, column, method, detect_method='iqr', contamination=0.05, n_neighbors=5):
     df_updated = df.copy()
-    outlier_info = detect_outliers_iqr(df_updated, column)
+
+    if detect_method == 'iforest':
+        outlier_info = detect_outliers_iforest(df_updated, column, contamination=contamination)
+    else:
+        outlier_info = detect_outliers_iqr(df_updated, column)
 
     if outlier_info['outliers_count'] == 0 or outlier_info['outliers_data'] is None:
         return df_updated, 0
 
     processed_count = outlier_info['outliers_count']
 
-    if method == 'iqr':
-        # Замена на границы IQR - используем clip для надежности
+    if method in ('iqr', 'clip', 'cap'):
+        # Замена на границы, если они определены
         lower_bound = outlier_info['lower_bound']
         upper_bound = outlier_info['upper_bound']
+        if lower_bound is None or upper_bound is None:
+            return df_updated, 0
         df_updated[column] = df_updated[column].clip(lower=lower_bound, upper=upper_bound)
 
     elif method == 'median':
         # Замена на медиану
         median_val = df_updated[column].median()
-        for idx in outlier_info['outliers_data'].index:
-            df_updated.loc[idx, column] = median_val
+        df_updated.loc[outlier_info['outliers_data'].index, column] = median_val
 
     elif method == 'mean':
         # Замена на среднее
         mean_val = df_updated[column].mean()
-        for idx in outlier_info['outliers_data'].index:
-            df_updated.loc[idx, column] = mean_val
+        df_updated.loc[outlier_info['outliers_data'].index, column] = mean_val
+
+    elif method == 'knn':
+        # Замена на значение из ближайших соседей
+        numeric_cols = df_updated.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # Убираем текущий столбец и столбцы с пропусками
+        feature_cols = [col for col in numeric_cols if col != column and df_updated[col].notna().sum() > 0]
+        
+        if len(feature_cols) == 0:
+            # Если нет других признаков, используем медиану
+            median_val = df_updated[column].median()
+            df_updated.loc[outlier_info['outliers_data'].index, column] = median_val
+        else:
+            # Подготовка данных: только строки без пропусков в feature_cols
+            valid_mask = df_updated[feature_cols].notna().all(axis=1)
+            valid_data = df_updated[valid_mask].copy()
+            
+            if len(valid_data) < n_neighbors + 1:
+                # Если недостаточно данных, используем медиану
+                median_val = df_updated[column].median()
+                df_updated.loc[outlier_info['outliers_data'].index, column] = median_val
+            else:
+                # Разделяем на обучающие (без выбросов) и тестовые (выбросы) данные
+                outlier_indices = outlier_info['outliers_data'].index
+                train_mask = valid_mask & ~df_updated.index.isin(outlier_indices)
+                train_data = df_updated[train_mask]
+                
+                if len(train_data) < n_neighbors:
+                    # Если недостаточно обучающих данных, используем медиану
+                    median_val = df_updated[column].median()
+                    df_updated.loc[outlier_indices, column] = median_val
+                else:
+                    # Масштабирование признаков
+                    scaler = StandardScaler()
+                    X_train = scaler.fit_transform(train_data[feature_cols])
+                    X_outliers = scaler.transform(df_updated.loc[outlier_indices, feature_cols])
+                    y_train = train_data[column].values
+                    
+                    # Обучение KNN регрессора
+                    knn = KNeighborsRegressor(n_neighbors=min(n_neighbors, len(train_data)), weights='distance')
+                    knn.fit(X_train, y_train)
+                    
+                    # Предсказание для выбросов
+                    predictions = knn.predict(X_outliers)
+                    df_updated.loc[outlier_indices, column] = predictions
 
     elif method == 'remove':
         # Удаление строк с выбросами
@@ -119,18 +213,29 @@ def process_outliers(df, column, method):
 
     return df_updated, processed_count
 
+
 def has_numeric_missing(df):
     """Проверяет наличие пропусков в числовых столбцах"""
     return df.select_dtypes(include='number').isna().any().any()
+
 
 def has_categorical_missing(df):
     """Проверяет наличие пропусков в категориальных столбцах"""
     cat_cols = df.select_dtypes(include='object').columns
     return df[cat_cols].isna().any().any() if len(cat_cols) > 0 else False
 
-def fill_numeric_missing(df, method='median'):
+
+def fill_numeric_missing(df, method='median', n_neighbors=5, random_state=42):
     df_filled = df.copy()
     numeric_cols = df.select_dtypes(include='number').columns
+
+    if len(numeric_cols) == 0:
+        return df_filled
+
+    if method == 'knn':
+        imputer = KNNImputer(n_neighbors=n_neighbors)
+        df_filled[numeric_cols] = imputer.fit_transform(df_filled[numeric_cols])
+        return df_filled
 
     for col in numeric_cols:
         if df_filled[col].isna().any():
@@ -144,6 +249,7 @@ def fill_numeric_missing(df, method='median'):
 
     return df_filled
 
+
 def fill_categorical_missing(df, method='unknown'):
     df_filled = df.copy()
     cat_cols = df.select_dtypes(include='object').columns
@@ -152,18 +258,20 @@ def fill_categorical_missing(df, method='unknown'):
         if df_filled[col].isna().any():
             if method == 'unknown':
                 df_filled[col].fillna('Unknown', inplace=True)
-            elif method == 'mode':
+            elif method in ('mode', 'most_frequent'):
                 mode_val = df_filled[col].mode()
                 if not mode_val.empty:
                     df_filled[col].fillna(mode_val[0], inplace=True)
 
     return df_filled
 
+
 def remove_missing_rows(df):
     initial_rows = len(df)
     df_clean = df.dropna()
     removed_rows = initial_rows - len(df_clean)
     return df_clean, removed_rows
+
 
 def split_name_column(df, name_col='name', brand_col='brand', model_col='model'):
     df_split = df.copy()
@@ -194,6 +302,7 @@ def split_name_column(df, name_col='name', brand_col='brand', model_col='model')
     df_split = df_split[cols]
 
     return df_split
+
 
 def get_group_summary(df, group_by_col, agg_cols=None):
     if agg_cols is None:

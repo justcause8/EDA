@@ -12,7 +12,8 @@ from eda.plots import (
     plot_correlation_heatmap, plot_scatter, plot_numerical_histograms,
     plot_all_boxplots, plot_hist_by_category
 )
-
+from eda.report_generator import render_summary_report
+ 
 st.set_page_config(page_title="Автоматизированный EDA", layout="wide")
 st.title("Автоматизированный модуль разведочного анализа данных (EDA)")
 
@@ -27,12 +28,13 @@ st.sidebar.markdown("<br><br><br><br><br><br><br><br><br><br>", unsafe_allow_htm
 
 if uploaded:
     # Создаем вкладки для разных разделов анализа только после загрузки файла
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6= st.tabs([
         "Основная информация",
         "Визуализация пропусков",
         "Описательные статистики",
         "Анализ выбросов",
-        "Анализ взаимосвязей"
+        "Анализ взаимосвязей",
+        "Сводный отчёт"
     ])
     if st.sidebar.button("Вернуть исходные данные"):
         st.session_state['df'] = st.session_state['df_original'].copy()
@@ -209,13 +211,17 @@ if uploaded:
 
                 if missing_method == "Заполнение значениями":
                     # Выбор метода для числовых пропусков
+                    num_neighbors = 5
                     if has_numeric_missing:
                         num_method = st.radio(
                             "Метод заполнения числовых пропусков:",
-                            ("Медиана", "Среднее"),
+                            ("Медиана", "Среднее", "KNN (ближайшие соседи)"),
                             key="num_fill_method"
                         )
-                        if num_method == "Медиана":
+                        if num_method == "KNN (ближайшие соседи)":
+                            num_neighbors = st.slider("Число соседей для KNN", min_value=2, max_value=15, value=5, step=1)
+                            st.info("Числовые пропуски будут заполнены на основе KNN по числовым признакам.")
+                        elif num_method == "Медиана":
                             st.info("Числовые пропуски будут заполнены медианой.")
                         else:
                             st.info("Числовые пропуски будут заполнены средним значением.")
@@ -236,9 +242,8 @@ if uploaded:
                         else:
                             st.info("Категориальные пропуски будут заполнены значением 'Unknown'.")
                     else:
-                        # Нет категориальных пропусков — просто информируем
                         st.info("Категориальные пропуски отсутствуют. Будут обработаны только числовые.")
-                else:  # Удаление строк
+                else:
                     st.info("Строки, содержащие пропуски, будут удалены из датасета.")
 
                 # Кнопка заполнения
@@ -253,19 +258,29 @@ if uploaded:
 
                     if missing_method == "Заполнение значениями":
                         # Преобразуем названия методов
-                        num_fill_method = 'median' if num_method == "Медиана" else 'mean'
+                        num_fill_method_map = {
+                            "Медиана": "median",
+                            "Среднее": "mean",
+                            "KNN (ближайшие соседи)": "knn"
+                        }
+                        num_fill_method = num_fill_method_map.get(num_method, 'median')
                         cat_fill_method = 'unknown' if cat_method == "Неизвестно (Unknown)" else 'mode'
 
                         # Заполняем числовые пропуски
                         if has_numeric_missing:
-                            df_updated = fill_numeric_missing(df_updated, num_fill_method)
+                            df_updated = fill_numeric_missing(
+                                df_updated,
+                                num_fill_method,
+                                n_neighbors=num_neighbors,
+                                random_state=42
+                            )
 
                         # Заполняем категориальные пропуски
                         if has_categorical_missing:
                             df_updated = fill_categorical_missing(df_updated, cat_fill_method)
 
                         st.success("Все пропуски заполнены автоматически!")
-                    else:  # Удаление строк
+                    else:
                         df_updated, removed_rows = remove_missing_rows(df_updated)
 
                         if removed_rows > 0:
@@ -332,7 +347,24 @@ if uploaded:
     with tab4:
         st.header("Анализ выбросов")
         if len(numeric_cols) > 0:
-            outliers_summary = get_outliers_summary(df)
+            detection_choice = st.radio(
+                "Метод поиска выбросов",
+                ("IQR", "Isolation Forest"),
+                key="outlier_detection_method"
+            )
+
+            contamination = 0.05
+
+            if detection_choice == "Isolation Forest":
+                contamination = st.slider("Доля выбросов (contamination)", 0.01, 0.2, 0.05, 0.01)
+
+            detection_map = {
+                "IQR": "iqr",
+                "Isolation Forest": "iforest"
+            }
+            detect_method = detection_map[detection_choice]
+
+            outliers_summary = get_outliers_summary(df, method=detect_method, contamination=contamination)
             total_outliers = sum(info['outliers_count'] for info in outliers_summary.values())
 
             st.write("#### Визуализация выбросов")
@@ -340,14 +372,14 @@ if uploaded:
 
             # Таблица и детали — только если есть выбросы
             if total_outliers > 0:
-                st.write("#### Обнаруженные выбросы (метод межквартального размаха IQR)")
+                st.write(f"#### Обнаруженные выбросы ({detection_choice})")
                 outliers_data = []
                 for col, info in outliers_summary.items():
                     outliers_data.append({
                         'Признак': col,
                         'Количество выбросов': info['outliers_count'],
-                        'Нижняя граница': round(info['lower_bound'], 3),
-                        'Верхняя граница': round(info['upper_bound'], 3)
+                        'Нижняя граница': round(info['lower_bound'], 3) if info['lower_bound'] is not None else "-",
+                        'Верхняя граница': round(info['upper_bound'], 3) if info['upper_bound'] is not None else "-"
                     })
                 st.dataframe(outliers_data, use_container_width=True)
 
@@ -358,7 +390,10 @@ if uploaded:
 
                 if outlier_info['outliers_count'] > 0:
                     st.write(f"**Найдено выбросов: {outlier_info['outliers_count']}**")
-                    st.write(f"Границы нормальных значений: [{outlier_info['lower_bound']:.3f}, {outlier_info['upper_bound']:.3f}]")
+                    if outlier_info['lower_bound'] is not None and outlier_info['upper_bound'] is not None:
+                        st.write(f"Границы нормальных значений: [{outlier_info['lower_bound']:.3f}, {outlier_info['upper_bound']:.3f}]")
+                    else:
+                        st.write("Модель не задает явные границы, выбросы показаны списком.")
                     with st.expander("Показать строки с выбросами"):
                         st.dataframe(outlier_info['outliers_data'], use_container_width=True)
                 else:
@@ -395,9 +430,6 @@ if uploaded:
                         outlier_idx = outlier_options.index(selected_outlier)
                         row_idx, col, current_val = all_outliers[outlier_idx]
 
-                        # Определяем границы для выбранного столбца
-                        col_bounds = outliers_summary[col]
-
                         # Ввод нового значения
                         new_value = st.number_input(
                             f"Введите новое значение для {col} (строка {row_idx+1}):",
@@ -428,20 +460,31 @@ if uploaded:
                     st.write("Выберите метод обработки выбросов:")
 
                     # Выбор метода
-                    outlier_method = st.radio(
-                        "Метод обработки:",
-                        ("Замена на границы IQR", "Замена на медиану", "Замена на среднее", "Удаление выбросов"),
-                        key="auto_outlier_method"
-                    )
+                    n_neighbors = 5
+                    if detect_method == "iforest":
+                        outlier_method = st.radio(
+                            "Метод обработки:",
+                            ("Замена на медиану", "Замена на среднее", "KNN (ближайшие соседи)", "Удаление выбросов"),
+                            key="auto_outlier_method"
+                        )
+                    else:
+                        outlier_method = st.radio(
+                            "Метод обработки:",
+                            ("Замена на границы", "Замена на медиану", "Замена на среднее", "KNN (ближайшие соседи)", "Удаление выбросов"),
+                            key="auto_outlier_method"
+                        )
 
-                    if outlier_method == "Замена на границы IQR":
-                        st.info("Выбросы будут заменены на ближайшие границы нормальных значений (метод IQR).")
+                    if outlier_method == "KNN (ближайшие соседи)":
+                        n_neighbors = st.slider("Число соседей для KNN", min_value=2, max_value=15, value=5, step=1)
+                        st.info("Выбросы будут заменены на значения, предсказанные по k ближайшим соседям на основе других признаков.")
+                    elif outlier_method == "Замена на границы":
+                        st.info("Выбросы будут заменены на ближайшие границы нормальных значений.")
                     elif outlier_method == "Замена на медиану":
                         st.info("Выбросы будут заменены на медиану столбца.")
                     elif outlier_method == "Замена на среднее":
                         st.info("Выбросы будут заменены на среднее значение столбца.")
-                    else:  # Удаление
-                        st.info("Строки с выбросами будут удалены из датасета.")
+                    else:
+                        st.info("Строки с выбросами будут удалены.")
 
                     # Выбор области применения
                     process_all_columns = st.checkbox("Применить ко всем столбцам", value=False, key="process_all_columns")
@@ -457,9 +500,10 @@ if uploaded:
                     if st.button(button_text):
                         # Преобразуем название метода для функции
                         method_map = {
-                            "Замена на границы IQR": "iqr",
+                            "Замена на границы": "clip",
                             "Замена на медиану": "median",
                             "Замена на среднее": "mean",
+                            "KNN (ближайшие соседи)": "knn",
                             "Удаление выбросов": "remove"
                         }
                         method = method_map[outlier_method]
@@ -469,7 +513,14 @@ if uploaded:
                         total_processed = 0
 
                         for col in cols_to_process:
-                            col_updated, processed_count = process_outliers(df_updated, col, method)
+                            col_updated, processed_count = process_outliers(
+                                df_updated,
+                                col,
+                                method,
+                                detect_method=detect_method,
+                                contamination=contamination,
+                                n_neighbors=n_neighbors
+                            )
                             df_updated = col_updated
                             total_processed += processed_count
 
@@ -477,11 +528,11 @@ if uploaded:
                         st.session_state['outliers_filled'] = True
 
                         # Пересчитываем outliers_summary для всех методов
-                        outliers_summary = get_outliers_summary(df_updated)
+                        outliers_summary = get_outliers_summary(df_updated, method=detect_method, contamination=contamination)
                         total_outliers = sum(info['outliers_count'] for info in outliers_summary.values())
 
                         if total_processed > 0:
-                            if outlier_method == "Удаление выбросов":
+                            if outlier_method.startswith("Удаление выбросов"):
                                 st.success(f"Удалено {total_processed} выбросов из {len(cols_to_process)} столбцов!")
                             else:
                                 columns_text = "всех столбцов" if process_all_columns else f"столбца '{outlier_col}'"
@@ -542,6 +593,31 @@ if uploaded:
                     st.dataframe(summary['counts'])
             else:
                 st.error("Ошибка при создании сводной таблицы")
+
+    with tab6:
+        st.header("Сводный отчёт по датасету")
+        st.info("Автоматически сгенерированный отчёт с выводами и визуализациями.")
+
+        # Получаем метод выбросов из session_state (если пользователь его менял)
+        detect_choice = st.session_state.get('outlier_detection_method', 'IQR')
+        contamination = st.session_state.get('contamination', 0.05)
+        detect_method = 'iforest' if detect_choice == 'Isolation Forest' else 'iqr'
+
+        with st.spinner("Генерация отчёта..."):
+            render_summary_report(df, detect_method=detect_method, contamination=contamination)
+
+        st.subheader("HTML-отчёт")
+
+        if "summary_html" in st.session_state:
+            st.download_button(
+                "Скачать HTML-отчёт",
+                data=st.session_state["summary_html"],
+                file_name="eda_summary_report.html",
+                mime="text/html"
+            )
+
+
+
 else:
     # Если файл не загружен, показываем инструкцию
     st.info("Для начала анализа данных загрузите CSV-файл через боковую панель.")
