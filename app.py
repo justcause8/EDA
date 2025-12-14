@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import hashlib
 from eda.data_loader import load_data
 from eda.analysis import (
     dataset_info, get_missing_rows, numerical_stats,
@@ -14,6 +15,19 @@ from eda.plots import (
 )
 from eda.report_generator import render_summary_report
  
+def _hash_dataframe(df):
+    return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
+
+@st.cache_data
+def cached_get_outliers_summary(df_hash, method, contamination):
+    df = st.session_state['df']
+    return get_outliers_summary(df, method=method, contamination=contamination)
+
+@st.cache_data
+def cached_fill_numeric_missing(df_hash, method, n_neighbors, random_state):
+    df = st.session_state['df']
+    return fill_numeric_missing(df, method=method, n_neighbors=n_neighbors, random_state=random_state)
+
 st.set_page_config(page_title="Автоматизированный EDA", layout="wide")
 st.title("Автоматизированный модуль разведочного анализа данных (EDA)")
 
@@ -40,6 +54,7 @@ if uploaded:
         st.session_state['df'] = st.session_state['df_original'].copy()
         st.session_state['missing_filled'] = False
         st.session_state['outliers_filled'] = False
+        st.cache_data.clear()
         st.rerun()
 
     # Проверяем, изменился ли файл (по имени и размеру)
@@ -268,8 +283,9 @@ if uploaded:
 
                         # Заполняем числовые пропуски
                         if has_numeric_missing:
-                            df_updated = fill_numeric_missing(
-                                df_updated,
+                            df_hash = _hash_dataframe(df)
+                            df_updated = cached_fill_numeric_missing(
+                                df_hash,
                                 num_fill_method,
                                 n_neighbors=num_neighbors,
                                 random_state=42
@@ -364,7 +380,20 @@ if uploaded:
             }
             detect_method = detection_map[detection_choice]
 
-            outliers_summary = get_outliers_summary(df, method=detect_method, contamination=contamination)
+            df_hash = hash(df.values.tobytes()) if not df.empty else 0
+            cache_key = (df_hash, detect_method, contamination)
+
+            # Кешируем через session_state (ручное кеширование)
+            if "outliers_cache" not in st.session_state:
+                st.session_state["outliers_cache"] = {}
+
+            if cache_key not in st.session_state["outliers_cache"]:
+                st.session_state["outliers_cache"][cache_key] = get_outliers_summary(
+                    df, method=detect_method, contamination=contamination
+                )
+
+            df_hash = _hash_dataframe(df)
+            outliers_summary = cached_get_outliers_summary(df_hash, detect_method, contamination)
             total_outliers = sum(info['outliers_count'] for info in outliers_summary.values())
 
             st.write("#### Визуализация выбросов")

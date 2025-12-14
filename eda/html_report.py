@@ -11,10 +11,10 @@ def fig_to_base64(fig):
     return base64.b64encode(buf.read()).decode("utf-8")
 
 
-def html_block(title, content):
-    return f"""
-    <section>
-        <h2>{title}</h2>
-        {content}
-    </section>
-    """
+# def html_block(title, content):
+#     return f"""
+#     <section>
+#         <h2>{title}</h2>
+#         {content}
+#     </section>
+#     """
