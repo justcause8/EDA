@@ -215,12 +215,10 @@ def process_outliers(df, column, method, detect_method='iqr', contamination=0.05
 
 
 def has_numeric_missing(df):
-    """Проверяет наличие пропусков в числовых столбцах"""
     return df.select_dtypes(include='number').isna().any().any()
 
 
 def has_categorical_missing(df):
-    """Проверяет наличие пропусков в категориальных столбцах"""
     cat_cols = df.select_dtypes(include='object').columns
     return df[cat_cols].isna().any().any() if len(cat_cols) > 0 else False
 
