@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ### Запуск приложения
 ```bash
 # Из корневой директории проекта
-run dashboard/app.py
+streamlit run app.py
 ```
 
 Приложение будет доступно по адресу: `http://localhost:8501`

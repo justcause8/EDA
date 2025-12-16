@@ -6,7 +6,7 @@ from eda.analysis import (
     dataset_info, get_missing_rows, numerical_stats,
     get_categorical_analysis, get_outliers_summary, get_group_summary,
     get_all_outliers, process_outliers, has_numeric_missing, has_categorical_missing,
-    fill_numeric_missing, fill_categorical_missing, remove_missing_rows, split_name_column
+    fill_numeric_missing, fill_categorical_missing, remove_missing_rows, split_name_column, generate_insights
 )
 from eda.plots import (
     plot_missing, plot_bar,
@@ -76,7 +76,19 @@ if uploaded:
 
     with tab1:
         st.header("Основная информация о датасете")
-        
+
+        info = dataset_info(df)
+
+        col1, col2 = st.columns(2)
+        col1.metric("Кол-во строк", info["shape"][0])
+        col2.metric("Кол-во столбцов", info["shape"][1])
+
+        st.write("#### Ключевые инсайты")
+
+        insights = generate_insights(df)
+        for insight in insights:
+            st.markdown(f"- {insight}")
+
         # Разделение столбца name или CarName на brand и model
         column_to_split = None
         if 'name' in df.columns:
@@ -102,11 +114,6 @@ if uploaded:
         st.dataframe(df.head())
         st.write("#### Последние строки")
         st.dataframe(df.tail())
-
-        info = dataset_info(df)
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Кол-во строк", info["shape"][0])
-        col2.metric("Кол-во столбцов", info["shape"][1])
 
         st.write("#### Типы данных")
         dtypes_df = pd.DataFrame({

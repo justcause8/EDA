@@ -1,10 +1,12 @@
+import streamlit as st
+from scipy.stats import pearsonr
 import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 import streamlit as st
 from .analysis import (
     dataset_info, numerical_stats, get_categorical_analysis,
-    get_outliers_summary
+    get_outliers_summary, generate_insights
 )
 from .plots import (
     plot_missing, plot_numerical_histograms, plot_all_boxplots,
@@ -13,54 +15,40 @@ from .plots import (
 from eda.html_report import fig_to_base64
 
 def render_summary_report(df, detect_method='iqr', contamination=0.05):
-    import streamlit as st
-    from scipy.stats import pearsonr
-
     html_parts = []
     html_parts.append("<h1>Сводный отчёт по датасету</h1>")
 
-    # Общая информация
-    info = dataset_info(df)
+    # ===== Инсайты =====
+    st.markdown("#### Ключевые инсайты")
+    insights = generate_insights(df)
 
-    st.markdown("#### Общая информация о датасете")
-    st.markdown(f"- Количество строк: **{info['shape'][0]}**")
-    st.markdown(f"- Количество столбцов: **{info['shape'][1]}**")
+    for insight in insights:
+        st.markdown(f"- {insight}")
 
-    numeric_cols = df.select_dtypes(include='number').columns.tolist()
-    categorical_cols = df.select_dtypes(include='object').columns.tolist()
-
-    st.markdown(f"- Числовых признаков: **{len(numeric_cols)}**")
-    st.markdown(f"- Категориальных признаков: **{len(categorical_cols)}**")
-
-    missing_total = sum(info['missing_values'].values())
-    st.markdown(
-        f"- Обнаружено **{missing_total}** пропущенных значений."
-        if missing_total > 0 else
-        "- Пропущенных значений не обнаружено."
-    )
-
-    html_parts.append(f"""
-    <h2>Общая информация</h2>
-    <ul>
-        <li>Строк: <b>{info['shape'][0]}</b></li>
-        <li>Столбцов: <b>{info['shape'][1]}</b></li>
-        <li>Числовых признаков: <b>{len(numeric_cols)}</b></li>
-        <li>Категориальных признаков: <b>{len(categorical_cols)}</b></li>
-        <li>Пропущенных значений: <b>{missing_total}</b></li>
-    </ul>
-    """)
+    html_parts.append("<h2>Ключевые инсайты</h2><ul>")
+    for insight in insights:
+        html_parts.append(f"<li>{insight}</li>")
+    html_parts.append("</ul>")
 
     st.markdown("---")
 
-    # Пропуски
+    # ===== Пропущенные значения =====
+    info = dataset_info(df)
+    missing_total = sum(info["missing_values"].values())
+
     if missing_total > 0:
+        st.markdown("#### Пропущенные значения")
         fig = plot_missing(df)
         st.pyplot(fig)
 
         html_parts.append(f"""
         <h2>Пропущенные значения</h2>
-        <img src="data:image/png;base64,{fig_to_base64(fig)}" style="max-width:100%; margin-top: 20px;">
+        <img src="data:image/png;base64,{fig_to_base64(fig)}"
+             style="max-width:100%; margin-top:20px;">
         """)
+
+    numeric_cols = df.select_dtypes(include='number').columns.tolist()
+    categorical_cols = df.select_dtypes(include='object').columns.tolist()
 
     # Числовые признаки
     if numeric_cols:

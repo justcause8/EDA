@@ -325,3 +325,56 @@ def get_group_summary(df, group_by_col, agg_cols=None):
         'maxs': maxs,
         'counts': counts
     }
+
+def generate_insights(df):
+    info = dataset_info(df)
+    rows, cols = info["shape"]
+    missing = info["missing_values"]
+
+    numeric_cols = df.select_dtypes(include='number').columns
+    categorical_cols = df.select_dtypes(include='object').columns
+
+    insights = []
+
+    # Общая структура
+    insights.append(f"Количество строк: {rows}")
+    insights.append(f"Количество столбцов: {cols}")
+    insights.append(f"Числовых признаков: {len(numeric_cols)}")
+    insights.append(f"Категориальных признаков: {len(categorical_cols)}")
+
+    # Пропуски
+    missing_cols = {k: v for k, v in missing.items() if v > 0}
+    total_missing = sum(missing.values())
+
+    if not missing_cols:
+        insights.append("Пропущенные значения отсутствуют")
+    else:
+        percent = round(total_missing / (rows * cols) * 100, 2)
+        insights.append(
+            f"Обнаружено {total_missing} пропущенных значений "
+            f"в {len(missing_cols)} столбцах ({percent}%)"
+        )
+
+    # Сильные корреляции
+    corr = correlation_matrix(df)
+    strong_corr = []
+
+    if corr is not None and not corr.empty:
+        for i in corr.columns:
+            for j in corr.columns:
+                if i < j and abs(corr.loc[i, j]) > 0.6:
+                    strong_corr.append(f"{i} – {j} ({corr.loc[i, j]:.2f})")
+
+    if strong_corr:
+        insights.append(
+            "Обнаружены сильные корреляции между признаками: "
+            + ", ".join(strong_corr)
+        )
+
+    # Текстовый столбец
+    if 'name' in df.columns or 'CarName' in df.columns:
+        insights.append(
+            "Обнаружен столбец с названием автомобиля — возможна декомпозиция на бренд и модель"
+        )
+
+    return insights
