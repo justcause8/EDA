@@ -232,13 +232,13 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
     if performance_cols and size_cols and has_hypothesis_between(performance_cols, size_cols):
         perf_name = performance_cols[0]
         size_name = size_cols[0]
-        conclusion_parts.append(f"Чем больше {size_name} автомобиля, тем выше его расход топлива (хуже «{perf_name}»).")
+        conclusion_parts.append(f"Чем больше {size_name} автомобиля, тем выше его расход топлива (хуже {perf_name}).")
 
     # 2. Расход vs мощность
     if performance_cols and power_cols and has_hypothesis_between(performance_cols, power_cols):
         perf_name = performance_cols[0]
         power_name = power_cols[0]
-        conclusion_parts.append(f"Чем выше {power_name}, тем выше расход топлива (хуже «{perf_name}»).")
+        conclusion_parts.append(f"Чем выше {power_name}, тем выше расход топлива (хуже {perf_name}).")
 
     # 3. Мощность vs размеры двигателя
     if power_cols and size_cols and has_hypothesis_between(power_cols, size_cols):
@@ -257,36 +257,36 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
         year_name = year_cols[0]
         if has_hypothesis_between(year_cols, performance_cols):
             perf_name = performance_cols[0]
-            conclusion_parts.append(f"С течением времени («{year_name}») автомобили стали экономичнее (лучше «{perf_name}»).")
+            conclusion_parts.append(f"С течением времени ({year_name}) автомобили стали экономичнее (лучше {perf_name}).")
         if has_hypothesis_between(year_cols, power_cols):
             power_name = power_cols[0]
-            conclusion_parts.append(f"С течением времени («{year_name}») мощность двигателей ({power_name}) выросла.")
+            conclusion_parts.append(f"С течением времени ({year_name}) мощность двигателей ({power_name}) выросла.")
         if has_hypothesis_between(year_cols, size_cols) and not has_hypothesis_between(year_cols, power_cols):
             size_name = size_cols[0]
-            conclusion_parts.append(f"С течением времени («{year_name}») автомобили стали легче и компактнее (меньше «{size_name}»).")
+            conclusion_parts.append(f"С течением времени ({year_name}) автомобили стали легче и компактнее (меньше {size_name}).")
 
     # 6. Цена vs мощность
     price_cols = [c for c in numeric_cols if 'price' in c.lower() or 'cost' in c.lower()]
     if price_cols and power_cols and has_hypothesis_between(price_cols, power_cols):
         price_name = price_cols[0]
         power_name = power_cols[0]
-        conclusion_parts.append(f"Дорогие автомобили («{price_name}») обычно мощнее («{power_name}»).")
+        conclusion_parts.append(f"Дорогие автомобили ({price_name}) обычно мощнее ({power_name})")
 
     # 7. Пробег vs возраст
     mileage_cols = [c for c in numeric_cols if 'mileage' in c.lower() or 'odometer' in c.lower()]
     if mileage_cols and year_cols and has_hypothesis_between(mileage_cols, year_cols):
         mileage_name = mileage_cols[0]
         year_name = year_cols[0]
-        conclusion_parts.append(f"Более старые автомобили (меньше «{year_name}») чаще имеют больший пробег («{mileage_name}»).")
+        conclusion_parts.append(f"Более старые автомобили (меньше {year_name}) чаще имеют больший пробег ({mileage_name})")
 
     # Формируем итоговый вывод
     if conclusion_parts:
         conclusion_text = "Основные выводы:\n- " + "\n- ".join(conclusion_parts)
     else:
         if hypotheses:
-            conclusion_text = "В данных обнаружены статистически значимые зависимости между характеристиками автомобилей."
+            conclusion_text = "В данных обнаружены статистически значимые зависимости между характеристиками автомобилей"
         else:
-            conclusion_text = "Ярко выраженных закономерностей не обнаружено. Возможно, зависимости нелинейные или объём данных недостаточен."
+            conclusion_text = "Ярко выраженных закономерностей не обнаружено. Возможно, зависимости нелинейные или объём данных недостаточен"
 
     st.markdown(conclusion_text)
     html_parts.append(f"<h2>Вывод</h2><p>{conclusion_text.replace(chr(10), '<br>')}</p>")

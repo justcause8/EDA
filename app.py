@@ -390,7 +390,7 @@ if uploaded:
             df_hash = hash(df.values.tobytes()) if not df.empty else 0
             cache_key = (df_hash, detect_method, contamination)
 
-            # Кешируем через session_state (ручное кеширование)
+            # Кешируем через session_state
             if "outliers_cache" not in st.session_state:
                 st.session_state["outliers_cache"] = {}
 
@@ -429,7 +429,7 @@ if uploaded:
                     if outlier_info['lower_bound'] is not None and outlier_info['upper_bound'] is not None:
                         st.write(f"Границы нормальных значений: [{outlier_info['lower_bound']:.3f}, {outlier_info['upper_bound']:.3f}]")
                     else:
-                        st.write("Модель не задает явные границы, выбросы показаны списком.")
+                        st.write("Модель не задает явные границы, выбросы показаны списком")
                     with st.expander("Показать строки с выбросами"):
                         st.dataframe(outlier_info['outliers_data'], use_container_width=True)
                 else:
@@ -654,4 +654,4 @@ if uploaded:
 
 else:
     # Если файл не загружен, показываем инструкцию
-    st.info("Для начала анализа данных загрузите CSV-файл через боковую панель.")
+    st.info("Для начала анализа данных загрузите CSV-файл через боковую панель")
