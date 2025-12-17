@@ -6,7 +6,8 @@ from eda.analysis import (
     dataset_info, get_missing_rows, numerical_stats,
     get_categorical_analysis, get_outliers_summary, get_group_summary,
     get_all_outliers, process_outliers, has_numeric_missing, has_categorical_missing,
-    fill_numeric_missing, fill_categorical_missing, remove_missing_rows, split_name_column, generate_insights
+    fill_numeric_missing, fill_categorical_missing, remove_missing_rows, split_name_column, 
+    generate_insights, display_change_history
 )
 from eda.plots import (
     plot_missing, plot_bar,
@@ -19,9 +20,9 @@ def _hash_dataframe(df):
     return hashlib.md5(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
 
 @st.cache_data
-def cached_get_outliers_summary(df_hash, method, contamination):
+def cached_get_outliers_summary(df_hash, method):
     df = st.session_state['df']
-    return get_outliers_summary(df, method=method, contamination=contamination)
+    return get_outliers_summary(df, method=method)
 
 @st.cache_data
 def cached_fill_numeric_missing(df_hash, method, n_neighbors, random_state):
@@ -54,6 +55,8 @@ if uploaded:
         st.session_state['df'] = st.session_state['df_original'].copy()
         st.session_state['missing_filled'] = False
         st.session_state['outliers_filled'] = False
+        st.session_state['history_missing'] = []
+        st.session_state['history_outliers'] = [] 
         st.cache_data.clear()
         st.rerun()
 
@@ -64,7 +67,6 @@ if uploaded:
     if 'df' not in st.session_state or current_file_id != previous_file_id:
         # Загружаем новый файл
         df_initial = load_data(uploaded).reset_index(drop=True)
-        # df_initial = pd.read_csv(r"D:\ПОЛИТЕХ\4 курс\Интеллектуальные системы и технологии\курсовая\eda_application\data\Automobile.csv")
         st.session_state['df'] = df_initial.copy()
         st.session_state['df_original'] = df_initial.copy()
         st.session_state['current_file_id'] = current_file_id
@@ -72,6 +74,9 @@ if uploaded:
         st.session_state['outliers_filled'] = False
 
     df = st.session_state['df']
+
+    if 'filled_history' not in st.session_state:
+        st.session_state['filled_history'] = []
 
 
     with tab1:
@@ -193,8 +198,7 @@ if uploaded:
                                 key=f"manual_fill_{row_idx}_{col}"
                             )
                         else:
-                            # Категориальный/текстовый столбец
-                            # Получаем уникальные значения для подсказки
+                            # Категориальный столбец
                             unique_values = df[col].dropna().unique().tolist()
                             new_value = st.selectbox(
                                 f"Выберите значение для {col} (строка {row_idx+1}):",
@@ -211,11 +215,33 @@ if uploaded:
                         # Кнопка применения изменения
                         if st.button(f"Заполнить пропуск в строке {row_idx+1}, столбце '{col}'"):
                             if new_value is not None and str(new_value).strip() != "":
+                                # Сохраняем старое значение перед изменением
+                                old_value = df.loc[row_idx, col]
+                                
                                 # Создаем копию датафрейма и заполняем пропуск
                                 df_copy = df.copy()
                                 df_copy.loc[row_idx, col] = new_value
+                                
+                                # Сохраняем информацию о заполнении
+                                filled_position = {
+                                    'row': row_idx,
+                                    'column': col,
+                                    'old_value': old_value,
+                                    'new_value': new_value,
+                                    'row_display': row_idx + 1,
+                                    'fill_method': 'Ручное заполнение'
+                                }
+                                
+                                # Добавляем в историю (history_missing)
+                                if 'history_missing' not in st.session_state:
+                                    st.session_state['history_missing'] = []
+                                st.session_state['history_missing'].append([filled_position])
+                                
                                 st.session_state['df'] = df_copy
-                                st.success(f"Пропуск в строке {row_idx+1}, столбце '{col}' заполнен значением: {new_value}")
+                                st.session_state['missing_filled'] = True
+                                
+                                # Показываем уведомление
+                                change_type = "Заполнен пропуск" if pd.isna(old_value) else "Изменено значение"
                                 st.rerun()
                             else:
                                 st.error("Пожалуйста, введите значение для заполнения пропуска.")
@@ -275,9 +301,9 @@ if uploaded:
                     button_text = "Удалить строки с пропусками"
 
                 if st.button(button_text):
-                    # Создаем копию датафрейма для заполнения
                     df_updated = df.copy()
-
+                    all_filled_positions = []
+                    
                     if missing_method == "Заполнение значениями":
                         # Преобразуем названия методов
                         num_fill_method_map = {
@@ -285,38 +311,71 @@ if uploaded:
                             "Среднее": "mean",
                             "KNN (ближайшие соседи)": "knn"
                         }
-                        num_fill_method = num_fill_method_map.get(num_method, 'median')
-                        cat_fill_method = 'unknown' if cat_method == "Неизвестно (Unknown)" else 'mode'
 
+                        technical_num_method = num_fill_method_map.get(num_method, 'median')
+                        technical_cat_method = 'unknown' if cat_method == "Неизвестно (Unknown)" else 'mode'
+                        
                         # Заполняем числовые пропуски
                         if has_numeric_missing:
                             df_hash = _hash_dataframe(df)
-                            df_updated = cached_fill_numeric_missing(
+                            df_updated, num_filled = cached_fill_numeric_missing(
                                 df_hash,
-                                num_fill_method,
+                                technical_num_method,
                                 n_neighbors=num_neighbors,
                                 random_state=42
                             )
-
-                        # Заполняем категориальные пропуски
+                            # Присваиваем имя метода ТОЛЬКО числовым заполнениям
+                            for pos in num_filled:
+                                pos['fill_method'] = f"Авто: {num_method}"
+                            
+                            all_filled_positions.extend(num_filled)
+                        
                         if has_categorical_missing:
-                            df_updated = fill_categorical_missing(df_updated, cat_fill_method)
-
+                            df_updated, cat_filled = fill_categorical_missing(df_updated, technical_cat_method)
+                            
+                            # Присваиваем имя метода ТОЛЬКО категориальным заполнениям
+                            for pos in cat_filled:
+                                pos['fill_method'] = f"Авто: {cat_method}"
+                                
+                            all_filled_positions.extend(cat_filled)
+                        
                         st.success("Все пропуски заполнены автоматически!")
+                        
+                        if all_filled_positions:
+                            for pos in all_filled_positions:
+                                if pos.get('old_value') is None:
+                                    try:
+                                        pos['old_value'] = df.loc[pos['row'], pos['column']]
+                                    except:
+                                        pos['old_value'] = 'Не найдено'
+                                pos['timestamp'] = pd.Timestamp.now().isoformat()
+                            
+                            if 'history_missing' not in st.session_state:
+                                st.session_state['history_missing'] = []
+                            
+                            st.session_state['history_missing'].append(all_filled_positions)
+                    
                     else:
+                        # Удаление строк с пропусками
                         df_updated, removed_rows = remove_missing_rows(df_updated)
-
                         if removed_rows > 0:
-                            st.success(f"Удалено {removed_rows} строк с пропусками. Новое количество строк: {len(df_updated)}")
-                        else:
-                            st.info("Не найдено строк с пропусками для удаления.")
-
+                            st.success(f"Удалено {removed_rows} строк.")
+                    
+                    # Обновляем состояние
                     st.session_state['df'] = df_updated
                     st.session_state['missing_filled'] = True
+                    
+                    # Обновляем кеш и перезагружаем
+                    st.cache_data.clear()
                     st.rerun()
-
         else:
             st.info("Все данные полные — заполнение пропусков не требуется.")
+
+        display_change_history(
+            df, 
+            st.session_state.get('history_missing', []), 
+            title="История заполнения пропусков"
+        )
 
 
     with tab3:
@@ -370,25 +429,10 @@ if uploaded:
     with tab4:
         st.header("Анализ выбросов")
         if len(numeric_cols) > 0:
-            detection_choice = st.radio(
-                "Метод поиска выбросов",
-                ("IQR", "Isolation Forest"),
-                key="outlier_detection_method"
-            )
-
-            contamination = 0.05
-
-            if detection_choice == "Isolation Forest":
-                contamination = st.slider("Доля выбросов (contamination)", 0.01, 0.2, 0.05, 0.01)
-
-            detection_map = {
-                "IQR": "iqr",
-                "Isolation Forest": "iforest"
-            }
-            detect_method = detection_map[detection_choice]
+            detect_method = "iqr"
 
             df_hash = hash(df.values.tobytes()) if not df.empty else 0
-            cache_key = (df_hash, detect_method, contamination)
+            cache_key = (df_hash, detect_method)
 
             # Кешируем через session_state
             if "outliers_cache" not in st.session_state:
@@ -396,19 +440,18 @@ if uploaded:
 
             if cache_key not in st.session_state["outliers_cache"]:
                 st.session_state["outliers_cache"][cache_key] = get_outliers_summary(
-                    df, method=detect_method, contamination=contamination
+                    df, method=detect_method
                 )
 
             df_hash = _hash_dataframe(df)
-            outliers_summary = cached_get_outliers_summary(df_hash, detect_method, contamination)
+            outliers_summary = cached_get_outliers_summary(df_hash, detect_method)
             total_outliers = sum(info['outliers_count'] for info in outliers_summary.values())
 
             st.write("#### Визуализация выбросов")
             st.pyplot(plot_all_boxplots(df))
 
-            # Таблица и детали — только если есть выбросы
             if total_outliers > 0:
-                st.write(f"#### Обнаруженные выбросы ({detection_choice})")
+                st.write(f"#### Обнаруженные выбросы")
                 outliers_data = []
                 for col, info in outliers_summary.items():
                     outliers_data.append({
@@ -420,8 +463,6 @@ if uploaded:
                 st.dataframe(outliers_data, use_container_width=True)
 
                 outlier_col = st.selectbox("Выберите признак для детального анализа выбросов", numeric_cols)
-
-                # Детальный анализ — используем уже определённый outlier_col
                 outlier_info = outliers_summary[outlier_col]
 
                 if outlier_info['outliers_count'] > 0:
@@ -444,8 +485,6 @@ if uploaded:
 
             # Обработка выбросов
             st.write("#### Обработка выбросов")
-
-            # Ручное заполнение выбросов
             with st.expander("Ручное заполнение выбросов"):
                 # Находим все выбросы
                 all_outliers = get_all_outliers(df, outliers_summary)
@@ -479,6 +518,19 @@ if uploaded:
                                 # Создаем копию датафрейма и заменяем выброс
                                 df_copy = df.copy()
                                 df_copy.loc[row_idx, col] = new_value
+                                
+                                filled_position = {
+                                    'row': row_idx,
+                                    'column': col,
+                                    'old_value': current_val,
+                                    'new_value': new_value,
+                                    'row_display': row_idx + 1,
+                                    'fill_method': 'Ручное (выброс)'
+                                }
+                                if 'history_outliers' not in st.session_state:
+                                    st.session_state['history_outliers'] = []
+                                st.session_state['history_outliers'].append([filled_position])
+
                                 st.session_state['df'] = df_copy
                                 st.success(f"Выброс в строке {row_idx+1}, столбце '{col}' заменен с {current_val} на {new_value}")
                                 st.rerun()
@@ -489,26 +541,18 @@ if uploaded:
 
             # Автоматическая обработка выбросов
             with st.expander("Автоматическая обработка выбросов"):
-                # Проверяем наличие выбросов для обработки
                 has_outliers_for_auto = any(outliers_summary[col]['outliers_count'] > 0 for col in numeric_cols)
 
                 if has_outliers_for_auto:
                     st.write("Выберите метод обработки выбросов:")
 
-                    # Выбор метода
+                    # Выбор метода - для IQR доступны все методы
                     n_neighbors = 5
-                    if detect_method == "iforest":
-                        outlier_method = st.radio(
-                            "Метод обработки:",
-                            ("Замена на медиану", "Замена на среднее", "KNN (ближайшие соседи)", "Удаление выбросов"),
-                            key="auto_outlier_method"
-                        )
-                    else:
-                        outlier_method = st.radio(
-                            "Метод обработки:",
-                            ("Замена на границы", "Замена на медиану", "Замена на среднее", "KNN (ближайшие соседи)", "Удаление выбросов"),
-                            key="auto_outlier_method"
-                        )
+                    outlier_method = st.radio(
+                        "Метод обработки:",
+                        ("Замена на границы", "Замена на медиану", "Замена на среднее", "KNN (ближайшие соседи)", "Удаление выбросов"),
+                        key="auto_outlier_method"
+                    )
 
                     if outlier_method == "KNN (ближайшие соседи)":
                         n_neighbors = st.slider("Число соседей для KNN", min_value=2, max_value=15, value=5, step=1)
@@ -547,24 +591,32 @@ if uploaded:
                         # Обрабатываем выбросы
                         df_updated = df.copy()
                         total_processed = 0
+                        all_filled_history = []
 
                         for col in cols_to_process:
-                            col_updated, processed_count = process_outliers(
+                            col_updated, processed_count, history_log = process_outliers(
                                 df_updated,
                                 col,
                                 method,
                                 detect_method=detect_method,
-                                contamination=contamination,
                                 n_neighbors=n_neighbors
                             )
                             df_updated = col_updated
                             total_processed += processed_count
+                            
+                            if history_log:
+                                all_filled_history.extend(history_log)
+
+                        if all_filled_history:
+                            if 'history_outliers' not in st.session_state:
+                                st.session_state['history_outliers'] = []
+                            st.session_state['history_outliers'].append(all_filled_history)
 
                         st.session_state['df'] = df_updated
                         st.session_state['outliers_filled'] = True
 
-                        # Пересчитываем outliers_summary для всех методов
-                        outliers_summary = get_outliers_summary(df_updated, method=detect_method, contamination=contamination)
+                        # Пересчитываем outliers_summary
+                        outliers_summary = get_outliers_summary(df_updated, method=detect_method)
                         total_outliers = sum(info['outliers_count'] for info in outliers_summary.values())
 
                         if total_processed > 0:
@@ -580,6 +632,13 @@ if uploaded:
                         st.rerun()
                 else:
                     st.info("Выбросов для автоматической обработки не найдено!")
+            
+            display_change_history(
+                df, 
+                st.session_state.get('history_outliers', []), 
+                title="История обработки выбросов"
+            )
+
         else:
             st.info("Нет числовых столбцов для анализа выбросов")
 
@@ -640,7 +699,7 @@ if uploaded:
         detect_method = 'iforest' if detect_choice == 'Isolation Forest' else 'iqr'
 
         with st.spinner("Генерация отчёта..."):
-            render_summary_report(df, detect_method=detect_method, contamination=contamination)
+            render_summary_report(df, detect_method=detect_method)
 
         st.subheader("HTML-отчёт")
 

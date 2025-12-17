@@ -6,7 +6,7 @@ from scipy.stats import pearsonr
 import streamlit as st
 from .analysis import (
     dataset_info, numerical_stats, get_categorical_analysis,
-    get_outliers_summary, generate_insights
+    get_outliers_summary, generate_insights, get_change_history_df 
 )
 from .plots import (
     plot_missing, plot_numerical_histograms, plot_all_boxplots,
@@ -14,11 +14,11 @@ from .plots import (
 )
 from eda.html_report import fig_to_base64
 
-def render_summary_report(df, detect_method='iqr', contamination=0.05):
+def render_summary_report(df, detect_method='iqr'):
     html_parts = []
     html_parts.append("<h1>Сводный отчёт по датасету</h1>")
 
-    # ===== Инсайты =====
+    # Инсайты
     st.markdown("#### Ключевые инсайты")
     insights = generate_insights(df)
 
@@ -32,12 +32,14 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
 
     st.markdown("---")
 
-    # ===== Пропущенные значения =====
+    # Пропущенные значения
     info = dataset_info(df)
     missing_total = sum(info["missing_values"].values())
 
+    # Заголовок выводим всегда
+    st.markdown("#### Пропущенные значения")
+
     if missing_total > 0:
-        st.markdown("#### Пропущенные значения")
         fig = plot_missing(df)
         st.pyplot(fig)
 
@@ -46,6 +48,30 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
         <img src="data:image/png;base64,{fig_to_base64(fig)}"
              style="max-width:100%; margin-top:20px;">
         """)
+    else:
+        st.success("Пропущенных значений в данных не обнаружено.")
+        html_parts.append("<h2>Пропущенные значения</h2><p>Пропущенных значений нет.</p>")
+    
+    # Таблица истории
+    history_missing = st.session_state.get('history_missing', [])
+    if history_missing:
+        hist_df = get_change_history_df(df, history_missing) 
+        
+        if hist_df is not None:
+            html_table = hist_df.head(100).to_html(classes='table table-striped', index=False, border=0)
+            
+            html_parts.append(f"""
+            <h3>История заполнения пропусков</h3>
+            <div style='overflow-x:auto; font-size: 0.9em;'>
+                {html_table}
+            </div>
+            """)
+
+            st.markdown("##### История заполнения пропусков")
+            st.dataframe(hist_df, use_container_width=True)
+    
+    st.markdown("---")
+    
 
     numeric_cols = df.select_dtypes(include='number').columns.tolist()
     categorical_cols = df.select_dtypes(include='object').columns.tolist()
@@ -80,11 +106,9 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
                 st.markdown(f"- Уникальных значений: {info_col['unique_count']}")
                 st.markdown(f"- Пропусков: {info_col['missing_count']}")
 
-        # Инициализация в session_state, если ещё не задано
         if "summary_selected_cat_col" not in st.session_state:
             st.session_state["summary_selected_cat_col"] = categorical_cols[0]
 
-        # Selectbox обновляет session_state
         selected_cat_col = st.selectbox(
             "Выберите категориальный признак",
             categorical_cols,
@@ -105,25 +129,45 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
 
     # Выбросы
     if numeric_cols:
-        outliers = get_outliers_summary(df, method=detect_method, contamination=contamination)
+        outliers = get_outliers_summary(df, method=detect_method)
         total_outliers = sum(v['outliers_count'] for v in outliers.values())
 
+        st.markdown("#### Анализ выбросов")
+        fig = plot_all_boxplots(df)
+        st.pyplot(fig)
+        
+        html_parts.append(f"""
+        <h2>Анализ выбросов</h2>
+        <p>Метод детектирования: <b>{detect_method.upper()}</b></p>
+        <img src="data:image/png;base64,{fig_to_base64(fig)}" style="max-width:100%;">
+        """)
+
         if total_outliers > 0:
-            st.markdown("#### Анализ выбросов")
-            st.markdown(f"Метод: **{detect_method.upper()}**")
-            st.markdown(f"Обнаружено **{total_outliers}** выбросов")
+            st.markdown(f"Обнаружено **{total_outliers}** выбросов (метод {detect_method.upper()})")
+            html_parts.append(f"<p>Текущее кол-во выбросов: <b>{total_outliers}</b></p>")
+        else:
+            st.success(f"Выбросов не обнаружено (метод {detect_method.upper()}).")
+            html_parts.append(f"<p>Выбросов не обнаружено.</p>")
+        
+        # Таблица истории
+        history_outliers = st.session_state.get('history_outliers', [])
+        if history_outliers:
+            outlier_hist_df = get_change_history_df(df, history_outliers)
+            
+            if outlier_hist_df is not None:
+                html_table = outlier_hist_df.head(100).to_html(classes='table table-striped', index=False, border=0)
+                
+                html_parts.append(f"""
+                <h3>История обработки выбросов</h3>
+                <div style='overflow-x:auto; font-size: 0.9em;'>
+                    {html_table}
+                </div>
+                """)
+                    
+                st.markdown("##### История обработки выбросов")
+                st.dataframe(outlier_hist_df, use_container_width=True)
 
-            fig = plot_all_boxplots(df)
-            st.pyplot(fig)
-
-            html_parts.append(f"""
-            <h2>Анализ выбросов</h2>
-            <p>Метод: <b>{detect_method.upper()}</b></p>
-            <p>Всего выбросов: <b>{total_outliers}</b></p>
-            <img src="data:image/png;base64,{fig_to_base64(fig)}" style="max-width:100%;">
-            """)
-
-            st.markdown("---")
+        st.markdown("---")
 
         # Анализ взаимосвязей
     if len(numeric_cols) > 1:
@@ -167,7 +211,7 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
             <img src="data:image/png;base64,{fig_to_base64(fig)}" style="max-width:100%;">
             """)
 
-    # Сформулированные гипотезы (перенесено сюда — после сравнения распределений)
+    # Сформулированные гипотезы
     hypotheses = []
     if len(numeric_cols) > 1:
         def safe_corr(a, b):
@@ -197,10 +241,7 @@ def render_summary_report(df, detect_method='iqr', contamination=0.05):
             st.markdown("Сильные корреляции не обнаружены")
         st.markdown("---")
 
-       # Вывод на основе правил
     st.markdown("### Вывод")
-
-    # Вспомогательные функции
     def is_performance(col):
         return any(kw in col.lower() for kw in ['mpg', 'fuel', 'efficien', 'consumption', 'economy'])
     def is_power(col):
